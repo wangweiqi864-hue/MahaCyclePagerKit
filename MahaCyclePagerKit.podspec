@@ -1,11 +1,12 @@
 Pod::Spec.new do |s|
   s.name             = 'MahaCyclePagerKit'
-  s.version          = '0.1.0'
-  s.summary          = 'A private cycle pager component used by the app.'
+  s.version          = '0.1.1'
+  s.summary          = 'A private cycle pager component with cleaned-up public APIs.'
 
   s.description      = <<-DESC
 MahaCyclePagerKit repackages the existing TYCyclePagerView implementation
-into a private pod and exposes renamed public APIs for the app.
+into a private pod, keeps behavior compatibility, and exposes
+cleaned-up public APIs for new code.
   DESC
 
   s.homepage         = 'https://github.com/wangweiqi864-hue/MahaCyclePagerKit'

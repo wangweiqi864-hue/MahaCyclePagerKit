@@ -13,69 +13,69 @@ NS_INLINE MahaIndexSection MahaMakeIndexSection(NSInteger index, NSInteger secti
 
 @interface MahaCyclePagerView () <UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, MahaCyclePagerTransformLayoutDelegate> {
     struct {
-        unsigned int pagerViewDidScroll : 1;
-        unsigned int didScrollFromIndexToNewIndex : 1;
-        unsigned int initializeTransformAttributes : 1;
-        unsigned int applyTransformToAttributes : 1;
+        unsigned int respondsToPagerViewDidScroll : 1;
+        unsigned int respondsToDidScrollFromIndexToIndex : 1;
+        unsigned int respondsToInitializeTransformAttributes : 1;
+        unsigned int respondsToApplyTransformToAttributes : 1;
     } _delegateFlags;
     struct {
-        unsigned int cellForItemAtIndex : 1;
-        unsigned int layoutForPagerView : 1;
+        unsigned int respondsToCellForItemAtIndex : 1;
+        unsigned int respondsToLayoutForPagerView : 1;
     } _dataSourceFlags;
 }
 
 @property (nonatomic, weak) UICollectionView *collectionView;
 @property (nonatomic, strong) MahaCyclePagerViewLayout *layout;
-@property (nonatomic, strong) NSTimer *timer;
-@property (nonatomic, assign) NSInteger numberOfItems;
-@property (nonatomic, assign) NSInteger dequeueSection;
-@property (nonatomic, assign) MahaIndexSection beginDragIndexSection;
-@property (nonatomic, assign) NSInteger firstScrollIndex;
-@property (nonatomic, assign) BOOL needClearLayout;
-@property (nonatomic, assign) BOOL didReloadData;
-@property (nonatomic, assign) BOOL didLayout;
-@property (nonatomic, assign) BOOL needResetIndex;
+@property (nonatomic, strong) NSTimer *autoScrollTimer;
+@property (nonatomic, assign) NSInteger itemCount;
+@property (nonatomic, assign) NSInteger reuseSection;
+@property (nonatomic, assign) MahaIndexSection dragStartIndexSection;
+@property (nonatomic, assign) NSInteger pendingInitialScrollIndex;
+@property (nonatomic, assign) BOOL shouldClearCachedLayout;
+@property (nonatomic, assign) BOOL hasReloadedData;
+@property (nonatomic, assign) BOOL hasCompletedLayout;
+@property (nonatomic, assign) BOOL shouldResetIndexAfterReload;
 
 @end
 
-#define kMahaPagerViewMaxSectionCount 200
-#define kMahaPagerViewMinSectionCount 18
+static const NSInteger MahaPagerViewMaxSectionCount = 200;
+static const NSInteger MahaPagerViewMinSectionCount = 18;
 
 @implementation MahaCyclePagerView
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (self = [super initWithFrame:frame]) {
-        [self configureProperty];
-        [self addCollectionView];
+        [self commonInit];
     }
     return self;
 }
 
 - (instancetype)initWithCoder:(NSCoder *)aDecoder {
     if (self = [super initWithCoder:aDecoder]) {
-        [self configureProperty];
-        [self addCollectionView];
+        [self commonInit];
     }
     return self;
 }
 
-- (void)configureProperty {
-    _needResetIndex = NO;
-    _didReloadData = NO;
-    _didLayout = NO;
-    _autoScrollInterval = 0;
-    _isInfiniteLoop = YES;
-    _beginDragIndexSection.index = 0;
-    _beginDragIndexSection.section = 0;
-    _indexSection.index = -1;
-    _indexSection.section = -1;
-    _firstScrollIndex = -1;
+- (void)commonInit {
+    [self setUpDefaultState];
+    [self setUpCollectionView];
 }
 
-- (void)addCollectionView {
-    MahaCyclePagerTransformLayout *layout = [[MahaCyclePagerTransformLayout alloc] init];
-    UICollectionView *collectionView = [[UICollectionView alloc] initWithFrame:CGRectZero collectionViewLayout:layout];
-    layout.delegate = _delegateFlags.applyTransformToAttributes ? self : nil;
+- (void)setUpDefaultState {
+    _shouldResetIndexAfterReload = NO;
+    _hasReloadedData = NO;
+    _hasCompletedLayout = NO;
+    _autoScrollInterval = 0;
+    _isInfiniteLoop = YES;
+    _dragStartIndexSection = MahaMakeIndexSection(0, 0);
+    _indexSection = MahaMakeIndexSection(-1, -1);
+    _pendingInitialScrollIndex = -1;
+}
+
+- (void)setUpCollectionView {
+    MahaCyclePagerTransformLayout *transformLayout = [[MahaCyclePagerTransformLayout alloc] init];
+    UICollectionView *collectionView = [[UICollectionView alloc] initWithFrame:CGRectZero collectionViewLayout:transformLayout];
     collectionView.backgroundColor = [UIColor clearColor];
     collectionView.dataSource = self;
     collectionView.delegate = self;
@@ -88,49 +88,54 @@ NS_INLINE MahaIndexSection MahaMakeIndexSection(NSInteger index, NSInteger secti
     collectionView.showsVerticalScrollIndicator = NO;
     [self addSubview:collectionView];
     _collectionView = collectionView;
+    [self updateTransformLayoutDelegate];
+}
+
+- (void)updateTransformLayoutDelegate {
+    if (!self.collectionView) {
+        return;
+    }
+    ((MahaCyclePagerTransformLayout *)self.collectionView.collectionViewLayout).delegate = _delegateFlags.respondsToApplyTransformToAttributes ? self : nil;
 }
 
 - (void)willMoveToSuperview:(UIView *)newSuperview {
-    if (!newSuperview) {
-        [self removeTimer];
-    } else {
-        [self removeTimer];
-        if (_autoScrollInterval > 0) {
-            [self addTimer];
-        }
+    [super willMoveToSuperview:newSuperview];
+    [self stopAutoScrollTimer];
+    if (newSuperview && _autoScrollInterval > 0) {
+        [self startAutoScrollTimer];
     }
 }
 
-- (void)addTimer {
-    if (_timer || _autoScrollInterval <= 0) {
+- (void)startAutoScrollTimer {
+    if (_autoScrollTimer || _autoScrollInterval <= 0) {
         return;
     }
-    _timer = [NSTimer timerWithTimeInterval:_autoScrollInterval target:self selector:@selector(timerFired:) userInfo:nil repeats:YES];
-    [[NSRunLoop mainRunLoop] addTimer:_timer forMode:NSRunLoopCommonModes];
+    _autoScrollTimer = [NSTimer timerWithTimeInterval:_autoScrollInterval target:self selector:@selector(handleAutoScrollTimer:) userInfo:nil repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:_autoScrollTimer forMode:NSRunLoopCommonModes];
 }
 
-- (void)removeTimer {
-    if (!_timer) {
+- (void)stopAutoScrollTimer {
+    if (!_autoScrollTimer) {
         return;
     }
-    [_timer invalidate];
-    _timer = nil;
+    [_autoScrollTimer invalidate];
+    _autoScrollTimer = nil;
 }
 
-- (void)timerFired:(NSTimer *)timer {
-    if (!self.superview || !self.window || _numberOfItems == 0 || self.tracking) {
+- (void)handleAutoScrollTimer:(NSTimer *)timer {
+    if (!self.superview || !self.window || _itemCount == 0 || self.tracking) {
         return;
     }
     BOOL isRTL = NO;
     if (@available(iOS 9.0, *)) {
         isRTL = UIView.appearance.semanticContentAttribute == UISemanticContentAttributeForceRightToLeft;
     }
-    [self scrollToNearlyIndexAtDirection:(isRTL ? MahaPagerScrollDirectionLeft : MahaPagerScrollDirectionRight) animate:YES];
+    [self scrollToNearestIndexAtDirection:(isRTL ? MahaPagerScrollDirectionLeft : MahaPagerScrollDirectionRight) animate:YES];
 }
 
 - (MahaCyclePagerViewLayout *)layout {
     if (!_layout) {
-        if (_dataSourceFlags.layoutForPagerView) {
+        if (_dataSourceFlags.respondsToLayoutForPagerView) {
             _layout = [_dataSource layoutForPagerView:self];
             _layout.isInfiniteLoop = _isInfiniteLoop;
         }
@@ -142,6 +147,10 @@ NS_INLINE MahaIndexSection MahaMakeIndexSection(NSInteger index, NSInteger secti
 }
 
 - (NSInteger)curIndex {
+    return _indexSection.index;
+}
+
+- (NSInteger)currentIndex {
     return _indexSection.index;
 }
 
@@ -169,16 +178,24 @@ NS_INLINE MahaIndexSection MahaMakeIndexSection(NSInteger index, NSInteger secti
     return [_collectionView cellForItemAtIndexPath:[NSIndexPath indexPathForItem:_indexSection.index inSection:_indexSection.section]];
 }
 
+- (__kindof UICollectionViewCell *)currentIndexCell {
+    return [_collectionView cellForItemAtIndexPath:[NSIndexPath indexPathForItem:_indexSection.index inSection:_indexSection.section]];
+}
+
 - (NSArray<__kindof UICollectionViewCell *> *)visibleCells {
     return _collectionView.visibleCells;
 }
 
-- (NSArray *)visibleIndexs {
-    NSMutableArray *indexs = [NSMutableArray array];
+- (NSArray *)visibleIndexes {
+    NSMutableArray *visibleIndexes = [NSMutableArray array];
     for (NSIndexPath *indexPath in _collectionView.indexPathsForVisibleItems) {
-        [indexs addObject:@(indexPath.item)];
+        [visibleIndexes addObject:@(indexPath.item)];
     }
-    return [indexs copy];
+    return [visibleIndexes copy];
+}
+
+- (NSArray *)visibleIndexs {
+    return [self visibleIndexes];
 }
 
 - (void)setBackgroundView:(UIView *)backgroundView {
@@ -187,79 +204,83 @@ NS_INLINE MahaIndexSection MahaMakeIndexSection(NSInteger index, NSInteger secti
 
 - (void)setAutoScrollInterval:(CGFloat)autoScrollInterval {
     _autoScrollInterval = autoScrollInterval;
-    [self removeTimer];
+    [self stopAutoScrollTimer];
     if (autoScrollInterval > 0 && self.superview) {
-        [self addTimer];
+        [self startAutoScrollTimer];
     }
 }
 
 - (void)setDelegate:(id<MahaCyclePagerViewDelegate>)delegate {
     _delegate = delegate;
-    _delegateFlags.pagerViewDidScroll = [delegate respondsToSelector:@selector(pagerViewDidScroll:)];
-    _delegateFlags.didScrollFromIndexToNewIndex = [delegate respondsToSelector:@selector(pagerView:didScrollFromIndex:toIndex:)];
-    _delegateFlags.initializeTransformAttributes = [delegate respondsToSelector:@selector(pagerView:initializeTransformAttributes:)];
-    _delegateFlags.applyTransformToAttributes = [delegate respondsToSelector:@selector(pagerView:applyTransformToAttributes:)];
-    if (self.collectionView && self.collectionView.collectionViewLayout) {
-        ((MahaCyclePagerTransformLayout *)self.collectionView.collectionViewLayout).delegate = _delegateFlags.applyTransformToAttributes ? self : nil;
-    }
+    _delegateFlags.respondsToPagerViewDidScroll = [delegate respondsToSelector:@selector(pagerViewDidScroll:)];
+    _delegateFlags.respondsToDidScrollFromIndexToIndex = [delegate respondsToSelector:@selector(pagerView:didScrollFromIndex:toIndex:)];
+    _delegateFlags.respondsToInitializeTransformAttributes = [delegate respondsToSelector:@selector(pagerView:initializeTransformAttributes:)];
+    _delegateFlags.respondsToApplyTransformToAttributes = [delegate respondsToSelector:@selector(pagerView:applyTransformToAttributes:)];
+    [self updateTransformLayoutDelegate];
 }
 
 - (void)setDataSource:(id<MahaCyclePagerViewDataSource>)dataSource {
     _dataSource = dataSource;
-    _dataSourceFlags.cellForItemAtIndex = [dataSource respondsToSelector:@selector(pagerView:cellForItemAtIndex:)];
-    _dataSourceFlags.layoutForPagerView = [dataSource respondsToSelector:@selector(layoutForPagerView:)];
+    _dataSourceFlags.respondsToCellForItemAtIndex = [dataSource respondsToSelector:@selector(pagerView:cellForItemAtIndex:)];
+    _dataSourceFlags.respondsToLayoutForPagerView = [dataSource respondsToSelector:@selector(layoutForPagerView:)];
 }
 
 - (void)reloadData {
-    _didReloadData = YES;
-    _needResetIndex = YES;
+    _hasReloadedData = YES;
+    _shouldResetIndexAfterReload = YES;
     [self setNeedClearLayout];
-    [self clearLayout];
+    [self clearCachedLayoutIfNeeded];
     [self updateData];
 }
 
 - (void)updateData {
-    [self updateLayout];
-    _numberOfItems = [_dataSource numberOfItemsInPagerView:self];
+    [self refreshCollectionLayout];
+    _itemCount = [_dataSource numberOfItemsInPagerView:self];
     [_collectionView reloadData];
-    if (!_didLayout && !CGRectIsEmpty(self.collectionView.frame) && _indexSection.index < 0) {
-        _didLayout = YES;
+    if (!_hasCompletedLayout && !CGRectIsEmpty(self.collectionView.frame) && _indexSection.index < 0) {
+        _hasCompletedLayout = YES;
     }
-    BOOL needResetIndex = _needResetIndex && _reloadDataNeedResetIndex;
-    _needResetIndex = NO;
-    [self resetPagerViewAtIndex:(_indexSection.index < 0 && !CGRectIsEmpty(self.collectionView.frame)) || needResetIndex ? 0 : _indexSection.index];
-    if (needResetIndex) {
-        [self addTimer];
+    BOOL shouldResetToInitialIndex = _shouldResetIndexAfterReload && _reloadDataNeedResetIndex;
+    _shouldResetIndexAfterReload = NO;
+    NSInteger targetIndex = ((_indexSection.index < 0 && !CGRectIsEmpty(self.collectionView.frame)) || shouldResetToInitialIndex) ? 0 : _indexSection.index;
+    [self resetPagerViewAtIndex:targetIndex];
+    if (shouldResetToInitialIndex) {
+        [self startAutoScrollTimer];
     }
 }
 
 - (void)scrollToNearlyIndexAtDirection:(MahaPagerScrollDirection)direction animate:(BOOL)animate {
-    MahaIndexSection indexSection = [self nearlyIndexPathAtDirection:direction];
+    [self scrollToNearestIndexAtDirection:direction animate:animate];
+}
+
+- (void)scrollToNearestIndexAtDirection:(MahaPagerScrollDirection)direction animate:(BOOL)animate {
+    MahaIndexSection indexSection = [self adjacentIndexSectionAtDirection:direction];
     [self scrollToItemAtIndexSection:indexSection animate:animate];
 }
 
 - (void)scrollToItemAtIndex:(NSInteger)index animate:(BOOL)animate {
-    if (!_didLayout && _didReloadData) {
-        _firstScrollIndex = index;
+    if (!_hasCompletedLayout && _hasReloadedData) {
+        _pendingInitialScrollIndex = index;
     } else {
-        _firstScrollIndex = -1;
+        _pendingInitialScrollIndex = -1;
     }
     if (!_isInfiniteLoop) {
         [self scrollToItemAtIndexSection:MahaMakeIndexSection(index, 0) animate:animate];
         return;
     }
-    [self scrollToItemAtIndexSection:MahaMakeIndexSection(index, index >= self.curIndex ? _indexSection.section : _indexSection.section + 1) animate:animate];
+    NSInteger targetSection = index >= self.currentIndex ? _indexSection.section : _indexSection.section + 1;
+    [self scrollToItemAtIndexSection:MahaMakeIndexSection(index, targetSection) animate:animate];
 }
 
 - (void)scrollToItemAtIndexSection:(MahaIndexSection)indexSection animate:(BOOL)animate {
-    if (_numberOfItems <= 0 || ![self isValidIndexSection:indexSection]) {
+    if (_itemCount <= 0 || ![self isValidIndexSection:indexSection]) {
         return;
     }
     if (animate && [_delegate respondsToSelector:@selector(pagerViewWillBeginScrollingAnimation:)]) {
         [_delegate pagerViewWillBeginScrollingAnimation:self];
     }
-    CGFloat offset = [self calculateOffsetXAtIndexSection:indexSection];
-    [_collectionView setContentOffset:CGPointMake(offset, _collectionView.contentOffset.y) animated:animate];
+    CGFloat targetOffsetX = [self contentOffsetXForIndexSection:indexSection];
+    [_collectionView setContentOffset:CGPointMake(targetOffsetX, _collectionView.contentOffset.y) animated:animate];
 }
 
 - (void)registerClass:(Class)Class forCellWithReuseIdentifier:(NSString *)identifier {
@@ -271,11 +292,10 @@ NS_INLINE MahaIndexSection MahaMakeIndexSection(NSInteger index, NSInteger secti
 }
 
 - (__kindof UICollectionViewCell *)dequeueReusableCellWithReuseIdentifier:(NSString *)identifier forIndex:(NSInteger)index {
-    UICollectionViewCell *cell = [_collectionView dequeueReusableCellWithReuseIdentifier:identifier forIndexPath:[NSIndexPath indexPathForItem:index inSection:_dequeueSection]];
-    return cell;
+    return [_collectionView dequeueReusableCellWithReuseIdentifier:identifier forIndexPath:[NSIndexPath indexPathForItem:index inSection:_reuseSection]];
 }
 
-- (void)updateLayout {
+- (void)refreshCollectionLayout {
     if (!self.layout) {
         return;
     }
@@ -283,59 +303,59 @@ NS_INLINE MahaIndexSection MahaMakeIndexSection(NSInteger index, NSInteger secti
     ((MahaCyclePagerTransformLayout *)_collectionView.collectionViewLayout).layout = self.layout;
 }
 
-- (void)clearLayout {
-    if (_needClearLayout) {
+- (void)clearCachedLayoutIfNeeded {
+    if (_shouldClearCachedLayout) {
         _layout = nil;
-        _needClearLayout = NO;
+        _shouldClearCachedLayout = NO;
     }
 }
 
 - (void)setNeedClearLayout {
-    _needClearLayout = YES;
+    _shouldClearCachedLayout = YES;
 }
 
 - (void)setNeedUpdateLayout {
     if (!self.layout) {
         return;
     }
-    [self clearLayout];
-    [self updateLayout];
+    [self clearCachedLayoutIfNeeded];
+    [self refreshCollectionLayout];
     [_collectionView.collectionViewLayout invalidateLayout];
     [self resetPagerViewAtIndex:_indexSection.index < 0 ? 0 : _indexSection.index];
 }
 
 - (BOOL)isValidIndexSection:(MahaIndexSection)indexSection {
-    return indexSection.index >= 0 && indexSection.index < _numberOfItems && indexSection.section >= 0 && indexSection.section < kMahaPagerViewMaxSectionCount;
+    return indexSection.index >= 0 && indexSection.index < _itemCount && indexSection.section >= 0 && indexSection.section < MahaPagerViewMaxSectionCount;
 }
 
-- (MahaIndexSection)nearlyIndexPathAtDirection:(MahaPagerScrollDirection)direction {
-    return [self nearlyIndexPathForIndexSection:_indexSection direction:direction];
+- (MahaIndexSection)adjacentIndexSectionAtDirection:(MahaPagerScrollDirection)direction {
+    return [self adjacentIndexSectionFromIndexSection:_indexSection direction:direction];
 }
 
-- (MahaIndexSection)nearlyIndexPathForIndexSection:(MahaIndexSection)indexSection direction:(MahaPagerScrollDirection)direction {
-    if (indexSection.index < 0 || indexSection.index >= _numberOfItems) {
+- (MahaIndexSection)adjacentIndexSectionFromIndexSection:(MahaIndexSection)indexSection direction:(MahaPagerScrollDirection)direction {
+    if (indexSection.index < 0 || indexSection.index >= _itemCount) {
         return indexSection;
     }
 
     if (!_isInfiniteLoop) {
-        if (direction == MahaPagerScrollDirectionRight && indexSection.index == _numberOfItems - 1) {
+        if (direction == MahaPagerScrollDirectionRight && indexSection.index == _itemCount - 1) {
             return _autoScrollInterval > 0 ? MahaMakeIndexSection(0, 0) : indexSection;
         } else if (direction == MahaPagerScrollDirectionRight) {
             return MahaMakeIndexSection(indexSection.index + 1, 0);
         }
 
         if (indexSection.index == 0) {
-            return _autoScrollInterval > 0 ? MahaMakeIndexSection(_numberOfItems - 1, 0) : indexSection;
+            return _autoScrollInterval > 0 ? MahaMakeIndexSection(_itemCount - 1, 0) : indexSection;
         }
         return MahaMakeIndexSection(indexSection.index - 1, 0);
     }
 
     if (direction == MahaPagerScrollDirectionRight) {
-        if (indexSection.index < _numberOfItems - 1) {
+        if (indexSection.index < _itemCount - 1) {
             return MahaMakeIndexSection(indexSection.index + 1, indexSection.section);
         }
-        if (indexSection.section >= kMahaPagerViewMaxSectionCount - 1) {
-            return MahaMakeIndexSection(indexSection.index, kMahaPagerViewMaxSectionCount - 1);
+        if (indexSection.section >= MahaPagerViewMaxSectionCount - 1) {
+            return MahaMakeIndexSection(indexSection.index, MahaPagerViewMaxSectionCount - 1);
         }
         return MahaMakeIndexSection(0, indexSection.section + 1);
     }
@@ -346,90 +366,91 @@ NS_INLINE MahaIndexSection MahaMakeIndexSection(NSInteger index, NSInteger secti
     if (indexSection.section <= 0) {
         return MahaMakeIndexSection(indexSection.index, 0);
     }
-    return MahaMakeIndexSection(_numberOfItems - 1, indexSection.section - 1);
+    return MahaMakeIndexSection(_itemCount - 1, indexSection.section - 1);
 }
 
-- (MahaIndexSection)calculateIndexSectionWithOffsetX:(CGFloat)offsetX {
-    if (_numberOfItems <= 0) {
+- (MahaIndexSection)indexSectionForContentOffsetX:(CGFloat)contentOffsetX {
+    if (_itemCount <= 0) {
         return MahaMakeIndexSection(0, 0);
     }
-    UICollectionViewFlowLayout *layout = (UICollectionViewFlowLayout *)_collectionView.collectionViewLayout;
-    CGFloat leftEdge = _isInfiniteLoop ? _layout.sectionInset.left : _layout.onlyOneSectionInset.left;
-    CGFloat width = CGRectGetWidth(_collectionView.frame);
-    CGFloat middleOffset = offsetX + width / 2;
-    CGFloat itemWidth = layout.itemSize.width + layout.minimumInteritemSpacing;
-    NSInteger curIndex = 0;
-    NSInteger curSection = 0;
-    if (middleOffset - leftEdge >= 0) {
-        NSInteger itemIndex = (middleOffset - leftEdge + layout.minimumInteritemSpacing / 2) / itemWidth;
+    UICollectionViewFlowLayout *flowLayout = (UICollectionViewFlowLayout *)_collectionView.collectionViewLayout;
+    CGFloat leadingInset = _isInfiniteLoop ? _layout.sectionInset.left : _layout.onlyOneSectionInset.left;
+    CGFloat collectionViewWidth = CGRectGetWidth(_collectionView.frame);
+    CGFloat centeredOffsetX = contentOffsetX + collectionViewWidth / 2;
+    CGFloat itemStride = flowLayout.itemSize.width + flowLayout.minimumInteritemSpacing;
+    NSInteger currentIndex = 0;
+    NSInteger currentSection = 0;
+    if (centeredOffsetX - leadingInset >= 0) {
+        NSInteger itemIndex = (centeredOffsetX - leadingInset + flowLayout.minimumInteritemSpacing / 2) / itemStride;
         if (itemIndex < 0) {
             itemIndex = 0;
-        } else if (itemIndex >= _numberOfItems * kMahaPagerViewMaxSectionCount) {
-            itemIndex = _numberOfItems * kMahaPagerViewMaxSectionCount - 1;
+        } else if (itemIndex >= _itemCount * MahaPagerViewMaxSectionCount) {
+            itemIndex = _itemCount * MahaPagerViewMaxSectionCount - 1;
         }
-        curIndex = itemIndex % _numberOfItems;
-        curSection = itemIndex / _numberOfItems;
+        currentIndex = itemIndex % _itemCount;
+        currentSection = itemIndex / _itemCount;
     }
-    return MahaMakeIndexSection(curIndex, curSection);
+    return MahaMakeIndexSection(currentIndex, currentSection);
 }
 
-- (CGFloat)calculateOffsetXAtIndexSection:(MahaIndexSection)indexSection {
-    if (_numberOfItems == 0) {
+- (CGFloat)contentOffsetXForIndexSection:(MahaIndexSection)indexSection {
+    if (_itemCount == 0) {
         return 0;
     }
-    UICollectionViewFlowLayout *layout = (UICollectionViewFlowLayout *)_collectionView.collectionViewLayout;
-    UIEdgeInsets edge = _isInfiniteLoop ? _layout.sectionInset : _layout.onlyOneSectionInset;
-    CGFloat leftEdge = edge.left;
-    CGFloat rightEdge = edge.right;
-    CGFloat width = CGRectGetWidth(_collectionView.frame);
-    CGFloat itemWidth = layout.itemSize.width + layout.minimumInteritemSpacing;
-    CGFloat offsetX = 0;
-    if (!_isInfiniteLoop && !_layout.itemHorizontalCenter && indexSection.index == _numberOfItems - 1) {
-        offsetX = leftEdge + itemWidth * (indexSection.index + indexSection.section * _numberOfItems) - (width - itemWidth) - layout.minimumInteritemSpacing + rightEdge;
+    UICollectionViewFlowLayout *flowLayout = (UICollectionViewFlowLayout *)_collectionView.collectionViewLayout;
+    UIEdgeInsets sectionInset = _isInfiniteLoop ? _layout.sectionInset : _layout.onlyOneSectionInset;
+    CGFloat leadingInset = sectionInset.left;
+    CGFloat trailingInset = sectionInset.right;
+    CGFloat collectionViewWidth = CGRectGetWidth(_collectionView.frame);
+    CGFloat itemStride = flowLayout.itemSize.width + flowLayout.minimumInteritemSpacing;
+    CGFloat targetOffsetX = 0;
+    if (!_isInfiniteLoop && !_layout.itemHorizontalCenter && indexSection.index == _itemCount - 1) {
+        targetOffsetX = leadingInset + itemStride * (indexSection.index + indexSection.section * _itemCount) - (collectionViewWidth - itemStride) - flowLayout.minimumInteritemSpacing + trailingInset;
     } else {
-        offsetX = leftEdge + itemWidth * (indexSection.index + indexSection.section * _numberOfItems) - layout.minimumInteritemSpacing / 2 - (width - itemWidth) / 2;
+        targetOffsetX = leadingInset + itemStride * (indexSection.index + indexSection.section * _itemCount) - flowLayout.minimumInteritemSpacing / 2 - (collectionViewWidth - itemStride) / 2;
     }
-    return MAX(offsetX, 0);
+    return MAX(targetOffsetX, 0);
 }
 
 - (void)resetPagerViewAtIndex:(NSInteger)index {
-    if (_didLayout && _firstScrollIndex >= 0) {
-        index = _firstScrollIndex;
-        _firstScrollIndex = -1;
+    if (_hasCompletedLayout && _pendingInitialScrollIndex >= 0) {
+        index = _pendingInitialScrollIndex;
+        _pendingInitialScrollIndex = -1;
     }
     if (index < 0) {
         return;
     }
-    if (index >= _numberOfItems) {
+    if (index >= _itemCount) {
         index = 0;
     }
-    [self scrollToItemAtIndexSection:MahaMakeIndexSection(index, _isInfiniteLoop ? kMahaPagerViewMaxSectionCount / 3 : 0) animate:NO];
+    NSInteger targetSection = _isInfiniteLoop ? MahaPagerViewMaxSectionCount / 3 : 0;
+    [self scrollToItemAtIndexSection:MahaMakeIndexSection(index, targetSection) animate:NO];
     if (!_isInfiniteLoop && _indexSection.index < 0) {
         [self scrollViewDidScroll:_collectionView];
     }
 }
 
-- (void)recyclePagerViewIfNeed {
+- (void)recyclePagerViewIfNeeded {
     if (!_isInfiniteLoop) {
         return;
     }
-    if (_indexSection.section > kMahaPagerViewMaxSectionCount - kMahaPagerViewMinSectionCount || _indexSection.section < kMahaPagerViewMinSectionCount) {
+    if (_indexSection.section > MahaPagerViewMaxSectionCount - MahaPagerViewMinSectionCount || _indexSection.section < MahaPagerViewMinSectionCount) {
         [self resetPagerViewAtIndex:_indexSection.index];
     }
 }
 
 - (NSInteger)numberOfSectionsInCollectionView:(UICollectionView *)collectionView {
-    return _isInfiniteLoop ? kMahaPagerViewMaxSectionCount : 1;
+    return _isInfiniteLoop ? MahaPagerViewMaxSectionCount : 1;
 }
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
-    _numberOfItems = [_dataSource numberOfItemsInPagerView:self];
-    return _numberOfItems;
+    _itemCount = [_dataSource numberOfItemsInPagerView:self];
+    return _itemCount;
 }
 
 - (__kindof UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
-    _dequeueSection = indexPath.section;
-    if (_dataSourceFlags.cellForItemAtIndex) {
+    _reuseSection = indexPath.section;
+    if (_dataSourceFlags.respondsToCellForItemAtIndex) {
         return [_dataSource pagerView:self cellForItemAtIndex:indexPath.row];
     }
     NSAssert(NO, @"pagerView cellForItemAtIndex: is nil!");
@@ -442,68 +463,78 @@ NS_INLINE MahaIndexSection MahaMakeIndexSection(NSInteger index, NSInteger secti
     }
     if (section == 0) {
         return _layout.firstSectionInset;
-    } else if (section == kMahaPagerViewMaxSectionCount - 1) {
+    } else if (section == MahaPagerViewMaxSectionCount - 1) {
         return _layout.lastSectionInset;
     }
     return _layout.middleSectionInset;
 }
 
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
-    UICollectionViewCell *cell = [collectionView cellForItemAtIndexPath:indexPath];
-    if ([_delegate respondsToSelector:@selector(pagerView:didSelectedItemCell:atIndex:)]) {
-        [_delegate pagerView:self didSelectedItemCell:cell atIndex:indexPath.item];
+    UICollectionViewCell *selectedCell = [collectionView cellForItemAtIndexPath:indexPath];
+    if ([_delegate respondsToSelector:@selector(pagerView:didSelectItemCell:atIndex:)]) {
+        [_delegate pagerView:self didSelectItemCell:selectedCell atIndex:indexPath.item];
+    } else if ([_delegate respondsToSelector:@selector(pagerView:didSelectedItemCell:atIndex:)]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        [_delegate pagerView:self didSelectedItemCell:selectedCell atIndex:indexPath.item];
+#pragma clang diagnostic pop
     }
-    if ([_delegate respondsToSelector:@selector(pagerView:didSelectedItemCell:atIndexSection:)]) {
-        [_delegate pagerView:self didSelectedItemCell:cell atIndexSection:MahaMakeIndexSection(indexPath.item, indexPath.section)];
+    if ([_delegate respondsToSelector:@selector(pagerView:didSelectItemCell:atIndexSection:)]) {
+        [_delegate pagerView:self didSelectItemCell:selectedCell atIndexSection:MahaMakeIndexSection(indexPath.item, indexPath.section)];
+    } else if ([_delegate respondsToSelector:@selector(pagerView:didSelectedItemCell:atIndexSection:)]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        [_delegate pagerView:self didSelectedItemCell:selectedCell atIndexSection:MahaMakeIndexSection(indexPath.item, indexPath.section)];
+#pragma clang diagnostic pop
     }
 }
 
 - (void)scrollViewDidScroll:(UIScrollView *)scrollView {
-    if (!_didLayout) {
+    if (!_hasCompletedLayout) {
         return;
     }
-    MahaIndexSection newIndexSection = [self calculateIndexSectionWithOffsetX:scrollView.contentOffset.x];
-    if (_numberOfItems <= 0 || ![self isValidIndexSection:newIndexSection]) {
-        NSLog(@"invalidIndexSection:(%ld,%ld)!", (long)newIndexSection.index, (long)newIndexSection.section);
+    MahaIndexSection updatedIndexSection = [self indexSectionForContentOffsetX:scrollView.contentOffset.x];
+    if (_itemCount <= 0 || ![self isValidIndexSection:updatedIndexSection]) {
+        NSLog(@"invalidIndexSection:(%ld,%ld)!", (long)updatedIndexSection.index, (long)updatedIndexSection.section);
         return;
     }
-    MahaIndexSection indexSection = _indexSection;
-    _indexSection = newIndexSection;
+    MahaIndexSection previousIndexSection = _indexSection;
+    _indexSection = updatedIndexSection;
 
-    if (_delegateFlags.pagerViewDidScroll) {
+    if (_delegateFlags.respondsToPagerViewDidScroll) {
         [_delegate pagerViewDidScroll:self];
     }
-    if (_delegateFlags.didScrollFromIndexToNewIndex && !MahaEqualIndexSection(_indexSection, indexSection)) {
-        [_delegate pagerView:self didScrollFromIndex:MAX(indexSection.index, 0) toIndex:_indexSection.index];
+    if (_delegateFlags.respondsToDidScrollFromIndexToIndex && !MahaEqualIndexSection(_indexSection, previousIndexSection)) {
+        [_delegate pagerView:self didScrollFromIndex:MAX(previousIndexSection.index, 0) toIndex:_indexSection.index];
     }
 }
 
 - (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView {
     if (_autoScrollInterval > 0) {
-        [self removeTimer];
+        [self stopAutoScrollTimer];
     }
-    _beginDragIndexSection = [self calculateIndexSectionWithOffsetX:scrollView.contentOffset.x];
+    _dragStartIndexSection = [self indexSectionForContentOffsetX:scrollView.contentOffset.x];
     if ([_delegate respondsToSelector:@selector(pagerViewWillBeginDragging:)]) {
         [_delegate pagerViewWillBeginDragging:self];
     }
 }
 
 - (void)scrollViewWillEndDragging:(UIScrollView *)scrollView withVelocity:(CGPoint)velocity targetContentOffset:(inout CGPoint *)targetContentOffset {
-    if (fabs(velocity.x) < 0.35 || !MahaEqualIndexSection(_beginDragIndexSection, _indexSection)) {
-        targetContentOffset->x = [self calculateOffsetXAtIndexSection:_indexSection];
+    if (fabs(velocity.x) < 0.35 || !MahaEqualIndexSection(_dragStartIndexSection, _indexSection)) {
+        targetContentOffset->x = [self contentOffsetXForIndexSection:_indexSection];
         return;
     }
     MahaPagerScrollDirection direction = MahaPagerScrollDirectionRight;
     if ((scrollView.contentOffset.x < 0 && targetContentOffset->x <= 0) || (targetContentOffset->x < scrollView.contentOffset.x && scrollView.contentOffset.x < scrollView.contentSize.width - scrollView.frame.size.width)) {
         direction = MahaPagerScrollDirectionLeft;
     }
-    MahaIndexSection indexSection = [self nearlyIndexPathForIndexSection:_indexSection direction:direction];
-    targetContentOffset->x = [self calculateOffsetXAtIndexSection:indexSection];
+    MahaIndexSection targetIndexSection = [self adjacentIndexSectionFromIndexSection:_indexSection direction:direction];
+    targetContentOffset->x = [self contentOffsetXForIndexSection:targetIndexSection];
 }
 
 - (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate {
     if (_autoScrollInterval > 0) {
-        [self addTimer];
+        [self startAutoScrollTimer];
     }
     if ([_delegate respondsToSelector:@selector(pagerViewDidEndDragging:willDecelerate:)]) {
         [_delegate pagerViewDidEndDragging:self willDecelerate:decelerate];
@@ -517,14 +548,14 @@ NS_INLINE MahaIndexSection MahaMakeIndexSection(NSInteger index, NSInteger secti
 }
 
 - (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView {
-    [self recyclePagerViewIfNeed];
+    [self recyclePagerViewIfNeeded];
     if ([_delegate respondsToSelector:@selector(pagerViewDidEndDecelerating:)]) {
         [_delegate pagerViewDidEndDecelerating:self];
     }
 }
 
 - (void)scrollViewDidEndScrollingAnimation:(UIScrollView *)scrollView {
-    [self recyclePagerViewIfNeed];
+    [self recyclePagerViewIfNeeded];
     if ([_delegate respondsToSelector:@selector(pagerViewDidEndScrollingAnimation:)]) {
         [_delegate pagerViewDidEndScrollingAnimation:self];
     }
@@ -532,22 +563,22 @@ NS_INLINE MahaIndexSection MahaMakeIndexSection(NSInteger index, NSInteger secti
 
 - (void)layoutSubviews {
     [super layoutSubviews];
-    BOOL needUpdateLayout = !CGRectEqualToRect(_collectionView.frame, self.bounds);
+    BOOL collectionViewFrameChanged = !CGRectEqualToRect(_collectionView.frame, self.bounds);
     _collectionView.frame = self.bounds;
-    if ((_indexSection.section < 0 || needUpdateLayout) && (_numberOfItems > 0 || _didReloadData)) {
-        _didLayout = YES;
+    if ((_indexSection.section < 0 || collectionViewFrameChanged) && (_itemCount > 0 || _hasReloadedData)) {
+        _hasCompletedLayout = YES;
         [self setNeedUpdateLayout];
     }
 }
 
 - (void)pagerViewTransformLayout:(MahaCyclePagerTransformLayout *)pagerViewTransformLayout initializeTransformAttributes:(UICollectionViewLayoutAttributes *)attributes {
-    if ([_delegate respondsToSelector:@selector(pagerView:initializeTransformAttributes:)]) {
+    if (_delegateFlags.respondsToInitializeTransformAttributes) {
         [_delegate pagerView:self initializeTransformAttributes:attributes];
     }
 }
 
 - (void)pagerViewTransformLayout:(MahaCyclePagerTransformLayout *)pagerViewTransformLayout applyTransformToAttributes:(UICollectionViewLayoutAttributes *)attributes {
-    if ([_delegate respondsToSelector:@selector(pagerView:applyTransformToAttributes:)]) {
+    if (_delegateFlags.respondsToApplyTransformToAttributes) {
         [_delegate pagerView:self applyTransformToAttributes:attributes];
     }
 }

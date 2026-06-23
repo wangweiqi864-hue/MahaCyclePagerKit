@@ -2,8 +2,8 @@
 
 @interface MahaPageControl ()
 
-@property (nonatomic, strong) NSArray<UIImageView *> *indicatorViews;
-@property (nonatomic, assign) BOOL forceUpdate;
+@property (nonatomic, strong) NSArray<UIImageView *> *pageIndicatorViews;
+@property (nonatomic, assign) BOOL shouldForceRefreshIndicators;
 
 @end
 
@@ -11,22 +11,22 @@
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (self = [super initWithFrame:frame]) {
-        [self configureProperties];
+        [self commonInit];
     }
     return self;
 }
 
 - (instancetype)initWithCoder:(NSCoder *)aDecoder {
     if (self = [super initWithCoder:aDecoder]) {
-        [self configureProperties];
+        [self commonInit];
     }
     return self;
 }
 
-- (void)configureProperties {
+- (void)commonInit {
     self.userInteractionEnabled = NO;
-    _forceUpdate = NO;
-    _animateDuring = 0.3;
+    _shouldForceRefreshIndicators = NO;
+    _animationDuration = 0.3;
     _pageIndicatorSpaing = 10;
     _indicatorImageContentMode = UIViewContentModeCenter;
     _pageIndicatorSize = CGSizeMake(6, 6);
@@ -38,14 +38,14 @@
 - (void)willMoveToSuperview:(UIView *)newSuperview {
     [super willMoveToSuperview:newSuperview];
     if (newSuperview) {
-        _forceUpdate = YES;
-        [self updateIndicatorViews];
-        _forceUpdate = NO;
+        _shouldForceRefreshIndicators = YES;
+        [self reloadIndicatorViewsIfNeeded];
+        _shouldForceRefreshIndicators = NO;
     }
 }
 
 - (CGSize)contentSize {
-    CGFloat width = (_indicatorViews.count - 1) * (_pageIndicatorSize.width + _pageIndicatorSpaing) + _pageIndicatorSize.width + _contentInset.left + _contentInset.right;
+    CGFloat width = (_pageIndicatorViews.count - 1) * (_pageIndicatorSize.width + _pageIndicatorSpaing) + _pageIndicatorSize.width + _contentInset.left + _contentInset.right;
     CGFloat height = _currentPageIndicatorSize.height + _contentInset.top + _contentInset.bottom;
     return CGSizeMake(width, height);
 }
@@ -58,21 +58,19 @@
     if (_currentPage >= numberOfPages) {
         _currentPage = 0;
     }
-    [self updateIndicatorViews];
-    if (_indicatorViews.count > 0) {
-        [self setNeedsLayout];
-    }
+    [self reloadIndicatorViewsIfNeeded];
+    [self setNeedsLayoutIfNecessary];
 }
 
 - (void)setCurrentPage:(NSInteger)currentPage {
-    if (_currentPage == currentPage || _indicatorViews.count <= currentPage) {
+    if (_currentPage == currentPage || _pageIndicatorViews.count <= currentPage) {
         return;
     }
     _currentPage = currentPage;
     if (!CGSizeEqualToSize(_currentPageIndicatorSize, _pageIndicatorSize)) {
         [self setNeedsLayout];
     }
-    [self updateIndicatorViewsBehavior];
+    [self refreshIndicatorAppearanceIfNeeded];
     if (self.userInteractionEnabled) {
         [self sendActionsForControlEvents:UIControlEventValueChanged];
     }
@@ -80,7 +78,7 @@
 
 - (void)setCurrentPage:(NSInteger)currentPage animate:(BOOL)animate {
     if (animate) {
-        [UIView animateWithDuration:_animateDuring animations:^{
+        [UIView animateWithDuration:_animationDuration animations:^{
             [self setCurrentPage:currentPage];
         }];
     } else {
@@ -88,24 +86,33 @@
     }
 }
 
+- (CGFloat)pageIndicatorSpacing {
+    return _pageIndicatorSpaing;
+}
+
+- (void)setPageIndicatorSpacing:(CGFloat)pageIndicatorSpacing {
+    _pageIndicatorSpaing = pageIndicatorSpacing;
+    [self setNeedsLayoutIfNecessary];
+}
+
 - (void)setPageIndicatorImage:(UIImage *)pageIndicatorImage {
     _pageIndicatorImage = pageIndicatorImage;
-    [self updateIndicatorViewsBehavior];
+    [self refreshIndicatorAppearanceIfNeeded];
 }
 
 - (void)setCurrentPageIndicatorImage:(UIImage *)currentPageIndicatorImage {
     _currentPageIndicatorImage = currentPageIndicatorImage;
-    [self updateIndicatorViewsBehavior];
+    [self refreshIndicatorAppearanceIfNeeded];
 }
 
 - (void)setPageIndicatorTintColor:(UIColor *)pageIndicatorTintColor {
     _pageIndicatorTintColor = pageIndicatorTintColor;
-    [self updateIndicatorViewsBehavior];
+    [self refreshIndicatorAppearanceIfNeeded];
 }
 
 - (void)setCurrentPageIndicatorTintColor:(UIColor *)currentPageIndicatorTintColor {
     _currentPageIndicatorTintColor = currentPageIndicatorTintColor;
-    [self updateIndicatorViewsBehavior];
+    [self refreshIndicatorAppearanceIfNeeded];
 }
 
 - (void)setPageIndicatorSize:(CGSize)pageIndicatorSize {
@@ -116,16 +123,12 @@
     if (CGSizeEqualToSize(_currentPageIndicatorSize, CGSizeZero) || (_currentPageIndicatorSize.width < pageIndicatorSize.width && _currentPageIndicatorSize.height < pageIndicatorSize.height)) {
         _currentPageIndicatorSize = pageIndicatorSize;
     }
-    if (_indicatorViews.count > 0) {
-        [self setNeedsLayout];
-    }
+    [self setNeedsLayoutIfNecessary];
 }
 
 - (void)setPageIndicatorSpaing:(CGFloat)pageIndicatorSpaing {
     _pageIndicatorSpaing = pageIndicatorSpaing;
-    if (_indicatorViews.count > 0) {
-        [self setNeedsLayout];
-    }
+    [self setNeedsLayoutIfNecessary];
 }
 
 - (void)setCurrentPageIndicatorSize:(CGSize)currentPageIndicatorSize {
@@ -133,96 +136,104 @@
         return;
     }
     _currentPageIndicatorSize = currentPageIndicatorSize;
-    if (_indicatorViews.count > 0) {
-        [self setNeedsLayout];
-    }
+    [self setNeedsLayoutIfNecessary];
+}
+
+- (CGFloat)animateDuring {
+    return _animationDuration;
+}
+
+- (void)setAnimateDuring:(CGFloat)animateDuring {
+    _animationDuration = animateDuring;
 }
 
 - (void)setContentHorizontalAlignment:(UIControlContentHorizontalAlignment)contentHorizontalAlignment {
     [super setContentHorizontalAlignment:contentHorizontalAlignment];
-    if (_indicatorViews.count > 0) {
-        [self setNeedsLayout];
-    }
+    [self setNeedsLayoutIfNecessary];
 }
 
 - (void)setContentVerticalAlignment:(UIControlContentVerticalAlignment)contentVerticalAlignment {
     [super setContentVerticalAlignment:contentVerticalAlignment];
-    if (_indicatorViews.count > 0) {
+    [self setNeedsLayoutIfNecessary];
+}
+
+- (void)setNeedsLayoutIfNecessary {
+    if (_pageIndicatorViews.count > 0) {
         [self setNeedsLayout];
     }
 }
 
-- (void)updateIndicatorViews {
-    if (!self.superview && !_forceUpdate) {
+- (void)reloadIndicatorViewsIfNeeded {
+    if (!self.superview && !_shouldForceRefreshIndicators) {
         return;
     }
-    if (_indicatorViews.count == _numberOfPages) {
-        [self updateIndicatorViewsBehavior];
+    if (_pageIndicatorViews.count == _numberOfPages) {
+        [self refreshIndicatorAppearanceIfNeeded];
         return;
     }
-    NSMutableArray *indicatorViews = _indicatorViews ? [_indicatorViews mutableCopy] : [NSMutableArray array];
+    NSMutableArray<UIImageView *> *indicatorViews = _pageIndicatorViews ? [_pageIndicatorViews mutableCopy] : [NSMutableArray array];
     if (indicatorViews.count < _numberOfPages) {
-        for (NSInteger idx = indicatorViews.count; idx < _numberOfPages; ++idx) {
-            UIImageView *indicatorView = [[UIImageView alloc] init];
-            indicatorView.contentMode = _indicatorImageContentMode;
-            [self addSubview:indicatorView];
-            [indicatorViews addObject:indicatorView];
+        for (NSInteger pageIndex = indicatorViews.count; pageIndex < _numberOfPages; ++pageIndex) {
+            UIImageView *indicatorImageView = [[UIImageView alloc] init];
+            indicatorImageView.contentMode = _indicatorImageContentMode;
+            [self addSubview:indicatorImageView];
+            [indicatorViews addObject:indicatorImageView];
         }
     } else if (indicatorViews.count > _numberOfPages) {
-        for (NSInteger idx = indicatorViews.count - 1; idx >= _numberOfPages; --idx) {
-            UIImageView *indicatorView = indicatorViews[idx];
-            [indicatorView removeFromSuperview];
-            [indicatorViews removeObjectAtIndex:idx];
+        for (NSInteger pageIndex = indicatorViews.count - 1; pageIndex >= _numberOfPages; --pageIndex) {
+            UIImageView *indicatorImageView = indicatorViews[pageIndex];
+            [indicatorImageView removeFromSuperview];
+            [indicatorViews removeObjectAtIndex:pageIndex];
         }
     }
-    _indicatorViews = [indicatorViews copy];
-    [self updateIndicatorViewsBehavior];
+    _pageIndicatorViews = [indicatorViews copy];
+    [self refreshIndicatorAppearanceIfNeeded];
 }
 
-- (void)updateIndicatorViewsBehavior {
-    if (_indicatorViews.count == 0 || (!self.superview && !_forceUpdate)) {
+- (void)refreshIndicatorAppearanceIfNeeded {
+    if (_pageIndicatorViews.count == 0 || (!self.superview && !_shouldForceRefreshIndicators)) {
         return;
     }
-    if (_hidesForSinglePage && _indicatorViews.count == 1) {
-        UIImageView *indicatorView = _indicatorViews.lastObject;
-        indicatorView.hidden = YES;
+    if (_hidesForSinglePage && _pageIndicatorViews.count == 1) {
+        UIImageView *indicatorImageView = _pageIndicatorViews.lastObject;
+        indicatorImageView.hidden = YES;
         return;
     }
-    NSInteger index = 0;
-    for (UIImageView *indicatorView in _indicatorViews) {
+    NSInteger pageIndex = 0;
+    for (UIImageView *indicatorImageView in _pageIndicatorViews) {
         if (_pageIndicatorImage) {
-            indicatorView.contentMode = _indicatorImageContentMode;
-            indicatorView.image = _currentPage == index ? _currentPageIndicatorImage : _pageIndicatorImage;
+            indicatorImageView.contentMode = _indicatorImageContentMode;
+            indicatorImageView.image = _currentPage == pageIndex ? _currentPageIndicatorImage : _pageIndicatorImage;
         } else {
-            indicatorView.image = nil;
-            indicatorView.backgroundColor = _currentPage == index ? _currentPageIndicatorTintColor : _pageIndicatorTintColor;
+            indicatorImageView.image = nil;
+            indicatorImageView.backgroundColor = _currentPage == pageIndex ? _currentPageIndicatorTintColor : _pageIndicatorTintColor;
         }
-        indicatorView.hidden = NO;
-        ++index;
+        indicatorImageView.hidden = NO;
+        ++pageIndex;
     }
 }
 
-- (void)layoutIndicatorViews {
-    if (_indicatorViews.count == 0) {
+- (void)layoutPageIndicatorViews {
+    if (_pageIndicatorViews.count == 0) {
         return;
     }
     CGFloat originX = 0;
     CGFloat centerY = 0;
-    CGFloat pageIndicatorSpaing = _pageIndicatorSpaing;
+    CGFloat indicatorSpacing = _pageIndicatorSpaing;
     switch (self.contentHorizontalAlignment) {
         case UIControlContentHorizontalAlignmentCenter:
-            originX = (CGRectGetWidth(self.frame) - (_indicatorViews.count - 1) * (_pageIndicatorSize.width + _pageIndicatorSpaing) - _currentPageIndicatorSize.width) / 2;
+            originX = (CGRectGetWidth(self.frame) - (_pageIndicatorViews.count - 1) * (_pageIndicatorSize.width + _pageIndicatorSpaing) - _currentPageIndicatorSize.width) / 2;
             break;
         case UIControlContentHorizontalAlignmentLeft:
             originX = _contentInset.left;
             break;
         case UIControlContentHorizontalAlignmentRight:
-            originX = CGRectGetWidth(self.frame) - ((_indicatorViews.count - 1) * (_pageIndicatorSize.width + _pageIndicatorSpaing) + _currentPageIndicatorSize.width) - _contentInset.right;
+            originX = CGRectGetWidth(self.frame) - ((_pageIndicatorViews.count - 1) * (_pageIndicatorSize.width + _pageIndicatorSpaing) + _currentPageIndicatorSize.width) - _contentInset.right;
             break;
         case UIControlContentHorizontalAlignmentFill:
             originX = _contentInset.left;
-            if (_indicatorViews.count > 1) {
-                pageIndicatorSpaing = (CGRectGetWidth(self.frame) - _contentInset.left - _contentInset.right - _pageIndicatorSize.width - (_indicatorViews.count - 1) * _pageIndicatorSize.width) / (_indicatorViews.count - 1);
+            if (_pageIndicatorViews.count > 1) {
+                indicatorSpacing = (CGRectGetWidth(self.frame) - _contentInset.left - _contentInset.right - _pageIndicatorSize.width - (_pageIndicatorViews.count - 1) * _pageIndicatorSize.width) / (_pageIndicatorViews.count - 1);
             }
             break;
         default:
@@ -246,23 +257,23 @@
             break;
     }
 
-    NSInteger index = 0;
-    for (UIImageView *indicatorView in _indicatorViews) {
+    NSInteger pageIndex = 0;
+    for (UIImageView *indicatorImageView in _pageIndicatorViews) {
         if (_pageIndicatorImage) {
-            indicatorView.layer.cornerRadius = 0;
+            indicatorImageView.layer.cornerRadius = 0;
         } else {
-            indicatorView.layer.cornerRadius = _currentPage == index ? _currentPageIndicatorSize.height / 2 : _pageIndicatorSize.height / 2;
+            indicatorImageView.layer.cornerRadius = _currentPage == pageIndex ? _currentPageIndicatorSize.height / 2 : _pageIndicatorSize.height / 2;
         }
-        CGSize size = index == _currentPage ? _currentPageIndicatorSize : _pageIndicatorSize;
-        indicatorView.frame = CGRectMake(originX, centerY - size.height / 2, size.width, size.height);
-        originX += size.width + pageIndicatorSpaing;
-        ++index;
+        CGSize indicatorSize = pageIndex == _currentPage ? _currentPageIndicatorSize : _pageIndicatorSize;
+        indicatorImageView.frame = CGRectMake(originX, centerY - indicatorSize.height / 2, indicatorSize.width, indicatorSize.height);
+        originX += indicatorSize.width + indicatorSpacing;
+        ++pageIndex;
     }
 }
 
 - (void)layoutSubviews {
     [super layoutSubviews];
-    [self layoutIndicatorViews];
+    [self layoutPageIndicatorViews];
 }
 
 @end

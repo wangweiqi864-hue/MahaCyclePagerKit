@@ -37,8 +37,10 @@ typedef NS_ENUM(NSUInteger, MahaPagerScrollDirection) {
 @optional
 
 - (void)pagerView:(MahaCyclePagerView *)pageView didScrollFromIndex:(NSInteger)fromIndex toIndex:(NSInteger)toIndex;
-- (void)pagerView:(MahaCyclePagerView *)pageView didSelectedItemCell:(__kindof UICollectionViewCell *)cell atIndex:(NSInteger)index;
-- (void)pagerView:(MahaCyclePagerView *)pageView didSelectedItemCell:(__kindof UICollectionViewCell *)cell atIndexSection:(MahaIndexSection)indexSection;
+- (void)pagerView:(MahaCyclePagerView *)pageView didSelectItemCell:(__kindof UICollectionViewCell *)cell atIndex:(NSInteger)index;
+- (void)pagerView:(MahaCyclePagerView *)pageView didSelectItemCell:(__kindof UICollectionViewCell *)cell atIndexSection:(MahaIndexSection)indexSection;
+- (void)pagerView:(MahaCyclePagerView *)pageView didSelectedItemCell:(__kindof UICollectionViewCell *)cell atIndex:(NSInteger)index DEPRECATED_MSG_ATTRIBUTE("Use pagerView:didSelectItemCell:atIndex: instead.");
+- (void)pagerView:(MahaCyclePagerView *)pageView didSelectedItemCell:(__kindof UICollectionViewCell *)cell atIndexSection:(MahaIndexSection)indexSection DEPRECATED_MSG_ATTRIBUTE("Use pagerView:didSelectItemCell:atIndexSection: instead.");
 - (void)pagerView:(MahaCyclePagerView *)pageView initializeTransformAttributes:(UICollectionViewLayoutAttributes *)attributes;
 - (void)pagerView:(MahaCyclePagerView *)pageView applyTransformToAttributes:(UICollectionViewLayoutAttributes *)attributes;
 - (void)pagerViewDidScroll:(MahaCyclePagerView *)pageView;
@@ -61,7 +63,8 @@ typedef NS_ENUM(NSUInteger, MahaPagerScrollDirection) {
 @property (nonatomic, assign) BOOL isInfiniteLoop;
 @property (nonatomic, assign) CGFloat autoScrollInterval;
 @property (nonatomic, assign) BOOL reloadDataNeedResetIndex;
-@property (nonatomic, assign, readonly) NSInteger curIndex;
+@property (nonatomic, assign, readonly) NSInteger currentIndex;
+@property (nonatomic, assign, readonly) NSInteger curIndex DEPRECATED_MSG_ATTRIBUTE("Use currentIndex instead.");
 @property (nonatomic, assign, readonly) MahaIndexSection indexSection;
 @property (nonatomic, assign, readonly) CGPoint contentOffset;
 @property (nonatomic, assign, readonly) BOOL tracking;
@@ -72,12 +75,15 @@ typedef NS_ENUM(NSUInteger, MahaPagerScrollDirection) {
 - (void)updateData;
 - (void)setNeedUpdateLayout;
 - (void)setNeedClearLayout;
-- (__kindof UICollectionViewCell * _Nullable)curIndexCell;
+- (__kindof UICollectionViewCell * _Nullable)currentIndexCell;
+- (__kindof UICollectionViewCell * _Nullable)curIndexCell DEPRECATED_MSG_ATTRIBUTE("Use currentIndexCell instead.");
 - (NSArray<__kindof UICollectionViewCell *> * _Nullable)visibleCells;
-- (NSArray *)visibleIndexs;
+- (NSArray *)visibleIndexes;
+- (NSArray *)visibleIndexs DEPRECATED_MSG_ATTRIBUTE("Use visibleIndexes instead.");
 - (void)scrollToItemAtIndex:(NSInteger)index animate:(BOOL)animate;
 - (void)scrollToItemAtIndexSection:(MahaIndexSection)indexSection animate:(BOOL)animate;
-- (void)scrollToNearlyIndexAtDirection:(MahaPagerScrollDirection)direction animate:(BOOL)animate;
+- (void)scrollToNearestIndexAtDirection:(MahaPagerScrollDirection)direction animate:(BOOL)animate;
+- (void)scrollToNearlyIndexAtDirection:(MahaPagerScrollDirection)direction animate:(BOOL)animate DEPRECATED_MSG_ATTRIBUTE("Use scrollToNearestIndexAtDirection:animate: instead.");
 - (void)registerClass:(Class)Class forCellWithReuseIdentifier:(NSString *)identifier;
 - (void)registerNib:(UINib *)nib forCellWithReuseIdentifier:(NSString *)identifier;
 - (__kindof UICollectionViewCell *)dequeueReusableCellWithReuseIdentifier:(NSString *)identifier forIndex:(NSInteger)index;

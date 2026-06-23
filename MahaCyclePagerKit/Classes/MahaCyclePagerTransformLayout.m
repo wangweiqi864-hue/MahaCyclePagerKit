@@ -1,22 +1,22 @@
 #import "MahaCyclePagerTransformLayout.h"
 
-typedef NS_ENUM(NSUInteger, MahaTransformLayoutItemDirection) {
-    MahaTransformLayoutItemLeft,
-    MahaTransformLayoutItemCenter,
-    MahaTransformLayoutItemRight,
+typedef NS_ENUM(NSUInteger, MahaTransformLayoutItemPosition) {
+    MahaTransformLayoutItemPositionLeft,
+    MahaTransformLayoutItemPositionCenter,
+    MahaTransformLayoutItemPositionRight,
 };
 
 @interface MahaCyclePagerTransformLayout () {
     struct {
-        unsigned int applyTransformToAttributes : 1;
-        unsigned int initializeTransformAttributes : 1;
+        unsigned int respondsToApplyTransformToAttributes : 1;
+        unsigned int respondsToInitializeTransformAttributes : 1;
     } _delegateFlags;
 }
 @end
 
 @interface MahaCyclePagerViewLayout ()
 
-@property (nonatomic, weak) UIView *pageView;
+@property (nonatomic, weak) UIView *hostingView;
 
 @end
 
@@ -24,27 +24,31 @@ typedef NS_ENUM(NSUInteger, MahaTransformLayoutItemDirection) {
 
 - (instancetype)init {
     if (self = [super init]) {
-        self.scrollDirection = UICollectionViewScrollDirectionHorizontal;
+        [self configureDefaultScrollDirection];
     }
     return self;
 }
 
 - (instancetype)initWithCoder:(NSCoder *)aDecoder {
     if (self = [super initWithCoder:aDecoder]) {
-        self.scrollDirection = UICollectionViewScrollDirectionHorizontal;
+        [self configureDefaultScrollDirection];
     }
     return self;
 }
 
+- (void)configureDefaultScrollDirection {
+    self.scrollDirection = UICollectionViewScrollDirectionHorizontal;
+}
+
 - (void)setDelegate:(id<MahaCyclePagerTransformLayoutDelegate>)delegate {
     _delegate = delegate;
-    _delegateFlags.initializeTransformAttributes = [delegate respondsToSelector:@selector(pagerViewTransformLayout:initializeTransformAttributes:)];
-    _delegateFlags.applyTransformToAttributes = [delegate respondsToSelector:@selector(pagerViewTransformLayout:applyTransformToAttributes:)];
+    _delegateFlags.respondsToInitializeTransformAttributes = [delegate respondsToSelector:@selector(pagerViewTransformLayout:initializeTransformAttributes:)];
+    _delegateFlags.respondsToApplyTransformToAttributes = [delegate respondsToSelector:@selector(pagerViewTransformLayout:applyTransformToAttributes:)];
 }
 
 - (void)setLayout:(MahaCyclePagerViewLayout *)layout {
     _layout = layout;
-    _layout.pageView = self.collectionView;
+    _layout.hostingView = self.collectionView;
     self.itemSize = _layout.itemSize;
     self.minimumInteritemSpacing = _layout.itemSpacing;
     self.minimumLineSpacing = _layout.itemSpacing;
@@ -71,15 +75,19 @@ typedef NS_ENUM(NSUInteger, MahaTransformLayoutItemDirection) {
     return _layout.itemSpacing;
 }
 
-- (MahaTransformLayoutItemDirection)directionWithCenterX:(CGFloat)centerX {
-    MahaTransformLayoutItemDirection direction = MahaTransformLayoutItemRight;
-    CGFloat contentCenterX = self.collectionView.contentOffset.x + CGRectGetWidth(self.collectionView.frame) / 2;
-    if (ABS(centerX - contentCenterX) < 0.5) {
-        direction = MahaTransformLayoutItemCenter;
-    } else if (centerX - contentCenterX < 0) {
-        direction = MahaTransformLayoutItemLeft;
+- (CGFloat)visibleContentCenterX {
+    return self.collectionView.contentOffset.x + CGRectGetWidth(self.collectionView.frame) / 2;
+}
+
+- (MahaTransformLayoutItemPosition)itemPositionForCenterX:(CGFloat)centerX {
+    CGFloat visibleCenterX = [self visibleContentCenterX];
+    if (ABS(centerX - visibleCenterX) < 0.5) {
+        return MahaTransformLayoutItemPositionCenter;
     }
-    return direction;
+    if (centerX < visibleCenterX) {
+        return MahaTransformLayoutItemPositionLeft;
+    }
+    return MahaTransformLayoutItemPositionRight;
 }
 
 - (BOOL)shouldInvalidateLayoutForBoundsChange:(CGRect)newBounds {
@@ -87,14 +95,14 @@ typedef NS_ENUM(NSUInteger, MahaTransformLayoutItemDirection) {
 }
 
 - (NSArray<UICollectionViewLayoutAttributes *> *)layoutAttributesForElementsInRect:(CGRect)rect {
-    if (_delegateFlags.applyTransformToAttributes || _layout.layoutType != MahaCyclePagerTransformLayoutNormal) {
+    if (_delegateFlags.respondsToApplyTransformToAttributes || _layout.layoutType != MahaCyclePagerTransformLayoutNormal) {
         NSArray *attributesArray = [[NSArray alloc] initWithArray:[super layoutAttributesForElementsInRect:rect] copyItems:YES];
         CGRect visibleRect = {self.collectionView.contentOffset, self.collectionView.bounds.size};
         for (UICollectionViewLayoutAttributes *attributes in attributesArray) {
             if (!CGRectIntersectsRect(visibleRect, attributes.frame)) {
                 continue;
             }
-            if (_delegateFlags.applyTransformToAttributes) {
+            if (_delegateFlags.respondsToApplyTransformToAttributes) {
                 [_delegate pagerViewTransformLayout:self applyTransformToAttributes:attributes];
             } else {
                 [self applyTransformToAttributes:attributes layoutType:_layout.layoutType];
@@ -107,7 +115,7 @@ typedef NS_ENUM(NSUInteger, MahaTransformLayoutItemDirection) {
 
 - (UICollectionViewLayoutAttributes *)layoutAttributesForItemAtIndexPath:(NSIndexPath *)indexPath {
     UICollectionViewLayoutAttributes *attributes = [super layoutAttributesForItemAtIndexPath:indexPath];
-    if (_delegateFlags.initializeTransformAttributes) {
+    if (_delegateFlags.respondsToInitializeTransformAttributes) {
         [_delegate pagerViewTransformLayout:self initializeTransformAttributes:attributes];
     } else if (_layout.layoutType != MahaCyclePagerTransformLayoutNormal) {
         [self initializeTransformAttributes:attributes layoutType:_layout.layoutType];
@@ -146,8 +154,7 @@ typedef NS_ENUM(NSUInteger, MahaTransformLayoutItemDirection) {
     if (collectionViewWidth <= 0) {
         return;
     }
-    CGFloat centerX = self.collectionView.contentOffset.x + collectionViewWidth / 2;
-    CGFloat delta = ABS(attributes.center.x - centerX);
+    CGFloat delta = ABS(attributes.center.x - [self visibleContentCenterX]);
     CGFloat scale = MAX(1 - delta / collectionViewWidth * _layout.rateOfChange, _layout.minimumScale);
     CGFloat alpha = MAX(1 - delta / collectionViewWidth, _layout.minimumAlpha);
     [self applyLinearTransformToAttributes:attributes scale:scale alpha:alpha];
@@ -156,13 +163,13 @@ typedef NS_ENUM(NSUInteger, MahaTransformLayoutItemDirection) {
 - (void)applyLinearTransformToAttributes:(UICollectionViewLayoutAttributes *)attributes scale:(CGFloat)scale alpha:(CGFloat)alpha {
     CGAffineTransform transform = CGAffineTransformMakeScale(scale, scale);
     if (_layout.adjustSpacingWhenScroling) {
-        MahaTransformLayoutItemDirection direction = [self directionWithCenterX:attributes.center.x];
+        MahaTransformLayoutItemPosition itemPosition = [self itemPositionForCenterX:attributes.center.x];
         CGFloat translate = 0;
-        switch (direction) {
-            case MahaTransformLayoutItemLeft:
+        switch (itemPosition) {
+            case MahaTransformLayoutItemPositionLeft:
                 translate = 1.15 * attributes.size.width * (1 - scale) / 2;
                 break;
-            case MahaTransformLayoutItemRight:
+            case MahaTransformLayoutItemPositionRight:
                 translate = -1.15 * attributes.size.width * (1 - scale) / 2;
                 break;
             default:
@@ -181,23 +188,22 @@ typedef NS_ENUM(NSUInteger, MahaTransformLayoutItemDirection) {
     if (collectionViewWidth <= 0) {
         return;
     }
-    CGFloat centerX = self.collectionView.contentOffset.x + collectionViewWidth / 2;
-    CGFloat delta = ABS(attributes.center.x - centerX);
+    CGFloat delta = ABS(attributes.center.x - [self visibleContentCenterX]);
     CGFloat angle = MIN(delta / collectionViewWidth * (1 - _layout.rateOfChange), _layout.maximumAngle);
     CGFloat alpha = MAX(1 - delta / collectionViewWidth, _layout.minimumAlpha);
     [self applyCoverflowTransformToAttributes:attributes angle:angle alpha:alpha];
 }
 
 - (void)applyCoverflowTransformToAttributes:(UICollectionViewLayoutAttributes *)attributes angle:(CGFloat)angle alpha:(CGFloat)alpha {
-    MahaTransformLayoutItemDirection direction = [self directionWithCenterX:attributes.center.x];
+    MahaTransformLayoutItemPosition itemPosition = [self itemPositionForCenterX:attributes.center.x];
     CATransform3D transform3D = CATransform3DIdentity;
     transform3D.m34 = -0.002;
     CGFloat translate = 0;
-    switch (direction) {
-        case MahaTransformLayoutItemLeft:
+    switch (itemPosition) {
+        case MahaTransformLayoutItemPositionLeft:
             translate = (1 - cos(angle * 1.2 * M_PI)) * attributes.size.width;
             break;
-        case MahaTransformLayoutItemRight:
+        case MahaTransformLayoutItemPositionRight:
             translate = -(1 - cos(angle * 1.2 * M_PI)) * attributes.size.width;
             angle = -angle;
             break;
@@ -231,11 +237,15 @@ typedef NS_ENUM(NSUInteger, MahaTransformLayoutItemDirection) {
     return self;
 }
 
+- (CGFloat)verticalInsetForCenteredItem {
+    return (CGRectGetHeight(_hostingView.frame) - _itemSize.height) / 2;
+}
+
 - (UIEdgeInsets)onlyOneSectionInset {
-    CGFloat leftSpace = _pageView && !_isInfiniteLoop && _itemHorizontalCenter ? (CGRectGetWidth(_pageView.frame) - _itemSize.width) / 2 : _sectionInset.left;
-    CGFloat rightSpace = _pageView && !_isInfiniteLoop && _itemHorizontalCenter ? (CGRectGetWidth(_pageView.frame) - _itemSize.width) / 2 : _sectionInset.right;
+    CGFloat leftSpace = _hostingView && !_isInfiniteLoop && _itemHorizontalCenter ? (CGRectGetWidth(_hostingView.frame) - _itemSize.width) / 2 : _sectionInset.left;
+    CGFloat rightSpace = _hostingView && !_isInfiniteLoop && _itemHorizontalCenter ? (CGRectGetWidth(_hostingView.frame) - _itemSize.width) / 2 : _sectionInset.right;
     if (_itemVerticalCenter) {
-        CGFloat verticalSpace = (CGRectGetHeight(_pageView.frame) - _itemSize.height) / 2;
+        CGFloat verticalSpace = [self verticalInsetForCenteredItem];
         return UIEdgeInsetsMake(verticalSpace, leftSpace, verticalSpace, rightSpace);
     }
     return UIEdgeInsetsMake(_sectionInset.top, leftSpace, _sectionInset.bottom, rightSpace);
@@ -243,7 +253,7 @@ typedef NS_ENUM(NSUInteger, MahaTransformLayoutItemDirection) {
 
 - (UIEdgeInsets)firstSectionInset {
     if (_itemVerticalCenter) {
-        CGFloat verticalSpace = (CGRectGetHeight(_pageView.frame) - _itemSize.height) / 2;
+        CGFloat verticalSpace = [self verticalInsetForCenteredItem];
         return UIEdgeInsetsMake(verticalSpace, _sectionInset.left, verticalSpace, _itemSpacing);
     }
     return UIEdgeInsetsMake(_sectionInset.top, _sectionInset.left, _sectionInset.bottom, _itemSpacing);
@@ -251,7 +261,7 @@ typedef NS_ENUM(NSUInteger, MahaTransformLayoutItemDirection) {
 
 - (UIEdgeInsets)lastSectionInset {
     if (_itemVerticalCenter) {
-        CGFloat verticalSpace = (CGRectGetHeight(_pageView.frame) - _itemSize.height) / 2;
+        CGFloat verticalSpace = [self verticalInsetForCenteredItem];
         return UIEdgeInsetsMake(verticalSpace, 0, verticalSpace, _sectionInset.right);
     }
     return UIEdgeInsetsMake(_sectionInset.top, 0, _sectionInset.bottom, _sectionInset.right);
@@ -259,7 +269,7 @@ typedef NS_ENUM(NSUInteger, MahaTransformLayoutItemDirection) {
 
 - (UIEdgeInsets)middleSectionInset {
     if (_itemVerticalCenter) {
-        CGFloat verticalSpace = (CGRectGetHeight(_pageView.frame) - _itemSize.height) / 2;
+        CGFloat verticalSpace = [self verticalInsetForCenteredItem];
         return UIEdgeInsetsMake(verticalSpace, 0, verticalSpace, _itemSpacing);
     }
     return _sectionInset;
